@@ -27,6 +27,11 @@ exists. On process exit the plugin releases the source's lifecycle authority
 (`pane.release_agent`), flushing synchronously so even hard exits reach
 Herdr.
 
+Herdr accepts a source's reports only while their `seq` strictly increases
+and silently drops stale ones, so the reporter seeds its per-source sequence
+from the wall clock at startup — a restarted dsh never falls below the seq a
+previous process already used (releases consume seqs too).
+
 Outside a Herdr pane (`HERDR_ENV != 1`) the plugin is a strict no-op.
 
 ## Install into a profile

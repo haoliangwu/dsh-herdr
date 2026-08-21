@@ -44,7 +44,20 @@ const REQUEST_TIMEOUT_MS = 3_000
 const MAX_SEND_ATTEMPTS = 3
 
 export class HerdrReporter {
-  private seq = 0
+  /**
+   * Per-source report sequence, monotonic across processes.
+   *
+   * Herdr's pane.report_agent accepts a source's reports only while their
+   * `seq` strictly increases and silently drops anything at or below the
+   * highest seq it already accepted for that source — releases consume seqs
+   * too. A successor dsh process must therefore never restart its counter
+   * below a seq an earlier process used, or every report it sends is dropped
+   * and the pane sticks at its previous state. Seeding with wall-clock
+   * milliseconds (and ratcheting to the clock on every report) keeps restarts
+   * safely above any earlier process's counter; the same scheme Prime Agent's
+   * built-in Herdr reporter uses.
+   */
+  private seq = Date.now() * 1000
   private readonly endpoint: string
   /** Long-lived connection used only for the synchronous exit flush. */
   private readonly persistent: net.Socket
@@ -131,7 +144,9 @@ export class HerdrReporter {
   }
 
   private buildRequest(method: string, extra: Record<string, unknown>): HerdrRequest {
-    this.seq += 1
+    // Ratchet to the clock in case a long-lived process's counter would
+    // otherwise fall behind a successor's time-seeded start.
+    this.seq = Math.max(this.seq + 1, Date.now() * 1000)
     return {
       id: `${this.options.source}:${Date.now()}:${Math.floor(Math.random() * 1_000_000)
         .toString()

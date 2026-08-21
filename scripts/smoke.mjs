@@ -179,6 +179,10 @@ Object.assign(process.env, saved)
 console.log(`OK — ${lines.length} requests verified (idle/working/blocked mapping, seq, no-op)`)
 
 // --- 10. release on process exit (child process) --------------------------------
+// Capture the parent's max seq first: a successor process (the child) must
+// start its time-seeded counter above it, or Herdr would drop every report
+// as stale (per-source seqs must strictly increase across processes).
+const parentMaxSeq = Math.max(...lines.map((line) => line.params.seq))
 await close()
 const { socketPath: exitSocket, lines: exitLines, close: closeExit } = await startFakeHerdr()
 process.env.HERDR_SOCKET_PATH = exitSocket
@@ -207,6 +211,10 @@ await new Promise((r) => setTimeout(r, 200))
 const release = exitLines.find((line) => line.method === 'pane.release_agent')
 assert(release !== undefined, `no release_agent on exit; got ${JSON.stringify(exitLines)}`)
 assert(release.params.source === 'custom:dsh' && release.params.agent === 'dsh', 'release identity wrong')
+assert(
+  release.params.seq > parentMaxSeq,
+  `child release seq ${release.params.seq} must exceed parent max seq ${parentMaxSeq} (cross-process monotonicity)`,
+)
 await closeExit()
 
 console.log('OK — release_agent flushed on process exit')

@@ -6,7 +6,7 @@ var MAX_SEND_ATTEMPTS = 3;
 
 class HerdrReporter {
   options;
-  seq = 0;
+  seq = Date.now() * 1000;
   endpoint;
   persistent;
   constructor(options) {
@@ -73,7 +73,7 @@ class HerdrReporter {
     trySend();
   }
   buildRequest(method, extra) {
-    this.seq += 1;
+    this.seq = Math.max(this.seq + 1, Date.now() * 1000);
     return {
       id: `${this.options.source}:${Date.now()}:${Math.floor(Math.random() * 1e6).toString().padStart(6, "0")}`,
       method,
