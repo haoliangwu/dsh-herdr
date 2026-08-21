@@ -1,0 +1,11 @@
+# dsh-herdr — host bundle patch.
+#
+# Mounts the Herdr lifecycle reporter on the host plane. The plugin keys off
+# the Herdr environment (HERDR_ENV / HERDR_PANE_ID / HERDR_SOCKET_PATH) and is
+# a no-op when dsh runs outside a Herdr pane.
+#
+# Removing the package from the profile's bundles reverts everything.
+- insert:
+    - id: herdr-reporter
+      name: 'dsh-herdr'
+      inject: []
