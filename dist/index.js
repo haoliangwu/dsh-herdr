@@ -42,49 +42,41 @@ class HerdrReporter {
   }
   send(method, extra) {
     const request = this.buildRequest(method, extra);
-    const pending = this.requestChain.then(() => this.sendOnce(request));
-    this.requestChain = pending.catch(() => {});
+    this.requestChain = this.requestChain.then(() => {
+      this.fireAndForget(request);
+    }).catch(() => {});
   }
-  sendOnce(request) {
-    return new Promise((resolve) => {
+  fireAndForget(request) {
+    let attempts = 0;
+    const trySend = () => {
+      attempts += 1;
       let written = false;
-      let attempts = 0;
-      const trySend = () => {
-        attempts += 1;
-        written = false;
-        const client = net.createConnection(this.endpoint, () => {
-          written = true;
-          client.write(`${JSON.stringify(request)}
+      const client = net.createConnection(this.endpoint, () => {
+        written = true;
+        client.write(`${JSON.stringify(request)}
 `);
-        });
-        const drop = () => {
-          client.destroy();
-        };
-        const finish = () => {
-          drop();
-          resolve();
-        };
-        client.setTimeout(REQUEST_TIMEOUT_MS, () => {
-          if (!written && attempts < MAX_SEND_ATTEMPTS) {
-            drop();
-            trySend();
-          } else {
-            finish();
-          }
-        });
-        client.on("error", () => {
-          if (!written && attempts < MAX_SEND_ATTEMPTS) {
-            trySend();
-          } else {
-            finish();
-          }
-        });
-        client.on("data", finish);
-        client.on("end", finish);
-        client.on("close", () => resolve());
+      });
+      const drop = () => {
+        client.destroy();
       };
-      trySend();
-    });
+      client.setTimeout(REQUEST_TIMEOUT_MS, () => {
+        if (!written && attempts < MAX_SEND_ATTEMPTS) {
+          drop();
+          trySend();
+        } else {
+          drop();
+        }
+      });
+      client.on("error", () => {
+        if (!written && attempts < MAX_SEND_ATTEMPTS) {
+          trySend();
+        } else {
+          drop();
+        }
+      });
+      client.on("end", drop);
+    };
+    trySend();
   }
   buildRequest(method, extra) {
     this.seq = Math.max(this.seq + 1, Date.now() * 1000);
@@ -119,11 +111,23 @@ function apply(ctx, _config = {}) {
   const report = (state, message) => {
     reporter.report(state, message, reported?.session.id);
   };
-  const isRoot = (agent) => {
+  const getAgents = () => {
     try {
-      const agents = ctx.get("agents") ?? ctx.agents;
-      if (agents === undefined)
-        return true;
+      const viaGet = ctx.get?.("agents");
+      if (viaGet !== undefined)
+        return viaGet;
+    } catch {}
+    try {
+      return ctx.agents;
+    } catch {
+      return;
+    }
+  };
+  const isRoot = (agent) => {
+    const agents = getAgents();
+    if (agents === undefined)
+      return true;
+    try {
       return agents.roots().includes(agent);
     } catch {
       return true;
@@ -166,10 +170,10 @@ function apply(ctx, _config = {}) {
   });
   ctx.on("session/event", onSessionEvent);
   const sweep = () => {
+    const agents = getAgents();
+    if (agents === undefined)
+      return;
     try {
-      const agents = ctx.get("agents") ?? ctx.agents;
-      if (agents === undefined)
-        return;
       for (const agent of agents.roots())
         onCreated(agent);
     } catch {}

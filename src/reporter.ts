@@ -110,51 +110,48 @@ export class HerdrReporter {
 
   private send(method: string, extra: Record<string, unknown>): void {
     const request = this.buildRequest(method, extra)
-    const pending = this.requestChain.then(() => this.sendOnce(request))
-    // Keep the chain alive even if one send fails; a single dropped report
-    // must not block later lifecycle transitions (working -> idle).
-    this.requestChain = pending.catch(() => {})
+    // Chain only the *dispatch* order, not the connection lifetime: each
+    // report fires in seq order but does not wait for the previous socket to
+    // close, so a burst idle→working→blocked stays ordered without adding
+    // seconds of head-of-line blocking (the smoke test's 100ms window is an
+    // example: it would fail if we awaited the 3s Herdr timeout per report).
+    this.requestChain = this.requestChain
+      .then(() => {
+        this.fireAndForget(request)
+      })
+      .catch(() => {})
   }
 
-  private sendOnce(request: HerdrRequest): Promise<void> {
-    return new Promise<void>((resolve) => {
+  private fireAndForget(request: HerdrRequest): void {
+    let attempts = 0
+    const trySend = (): void => {
+      attempts += 1
       let written = false
-      let attempts = 0
-      const trySend = (): void => {
-        attempts += 1
-        written = false
-        const client = net.createConnection(this.endpoint, () => {
-          written = true
-          client.write(`${JSON.stringify(request)}\n`)
-        })
-        const drop = (): void => {
-          client.destroy()
-        }
-        const finish = (): void => {
-          drop()
-          resolve()
-        }
-        client.setTimeout(REQUEST_TIMEOUT_MS, () => {
-          if (!written && attempts < MAX_SEND_ATTEMPTS) {
-            drop()
-            trySend()
-          } else {
-            finish()
-          }
-        })
-        client.on('error', () => {
-          if (!written && attempts < MAX_SEND_ATTEMPTS) {
-            trySend()
-          } else {
-            finish()
-          }
-        })
-        client.on('data', finish)
-        client.on('end', finish)
-        client.on('close', () => resolve())
+      const client = net.createConnection(this.endpoint, () => {
+        written = true
+        client.write(`${JSON.stringify(request)}\n`)
+      })
+      const drop = (): void => {
+        client.destroy()
       }
-      trySend()
-    })
+      client.setTimeout(REQUEST_TIMEOUT_MS, () => {
+        if (!written && attempts < MAX_SEND_ATTEMPTS) {
+          drop()
+          trySend()
+        } else {
+          drop()
+        }
+      })
+      client.on('error', () => {
+        if (!written && attempts < MAX_SEND_ATTEMPTS) {
+          trySend()
+        } else {
+          drop()
+        }
+      })
+      client.on('end', drop)
+    }
+    trySend()
   }
 
   private buildRequest(method: string, extra: Record<string, unknown>): HerdrRequest {

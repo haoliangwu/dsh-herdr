@@ -60,13 +60,24 @@ export function apply(ctx: Context, _config: Config = {}): void {
     reporter.report(state, message, reported?.session.id)
   }
 
-  const isRoot = (agent: Agent): boolean => {
+  const getAgents = (): { roots(): Agent[] } | undefined => {
     try {
-      const agents = (ctx.get('agents') as { roots(): Agent[] } | undefined) ?? (ctx as unknown as { agents?: { roots(): Agent[] } }).agents
-      if (agents === undefined) return true
+      const viaGet = (ctx as unknown as { get?: (key: string) => unknown }).get?.('agents') as { roots(): Agent[] } | undefined
+      if (viaGet !== undefined) return viaGet
+    } catch {}
+    try {
+      return (ctx as unknown as { agents?: { roots(): Agent[] } }).agents
+    } catch {
+      return undefined
+    }
+  }
+
+  const isRoot = (agent: Agent): boolean => {
+    const agents = getAgents()
+    if (agents === undefined) return true
+    try {
       return agents.roots().includes(agent)
     } catch {
-      // The agents registry is not available yet (or at all); assume root.
       return true
     }
   }
@@ -108,12 +119,11 @@ export function apply(ctx: Context, _config: Config = {}): void {
   })
   ctx.on('session/event', onSessionEvent)
 
-  // Safety sweep for agents that already exist when this plugin loads (HMR):
-  // the registry may not be ready inside `apply`, so retry on the next tick.
+  // Safety sweep for agents that already exist when this plugin loads (HMR).
   const sweep = (): void => {
+    const agents = getAgents()
+    if (agents === undefined) return
     try {
-      const agents = (ctx.get('agents') as { roots(): Agent[] } | undefined) ?? (ctx as unknown as { agents?: { roots(): Agent[] } }).agents
-      if (agents === undefined) return
       for (const agent of agents.roots()) onCreated(agent)
     } catch {
       // agents registry not ready; `agent/created` will cover it.
