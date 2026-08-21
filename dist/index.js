@@ -1,7 +1,8 @@
 // src/reporter.ts
 import fs from "node:fs";
 import net from "node:net";
-var REQUEST_TIMEOUT_MS = 500;
+var REQUEST_TIMEOUT_MS = 3000;
+var MAX_SEND_ATTEMPTS = 3;
 
 class HerdrReporter {
   options;
@@ -40,16 +41,36 @@ class HerdrReporter {
   }
   send(method, extra) {
     const request = this.buildRequest(method, extra);
-    const client = net.createConnection(this.endpoint, () => {
-      client.write(`${JSON.stringify(request)}
+    let attempts = 0;
+    const trySend = () => {
+      attempts += 1;
+      let written = false;
+      const client = net.createConnection(this.endpoint, () => {
+        written = true;
+        client.write(`${JSON.stringify(request)}
 `);
-    });
-    const finish = () => {
-      client.destroy();
+      });
+      const drop = () => {
+        client.destroy();
+      };
+      client.setTimeout(REQUEST_TIMEOUT_MS, () => {
+        if (!written && attempts < MAX_SEND_ATTEMPTS) {
+          drop();
+          trySend();
+        } else {
+          drop();
+        }
+      });
+      client.on("error", () => {
+        if (!written && attempts < MAX_SEND_ATTEMPTS) {
+          trySend();
+        } else {
+          drop();
+        }
+      });
+      client.on("end", drop);
     };
-    client.setTimeout(REQUEST_TIMEOUT_MS, finish);
-    client.on("error", finish);
-    client.on("end", finish);
+    trySend();
   }
   buildRequest(method, extra) {
     this.seq += 1;

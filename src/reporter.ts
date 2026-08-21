@@ -33,7 +33,15 @@ interface HerdrRequest {
   readonly params: Record<string, unknown>
 }
 
-const REQUEST_TIMEOUT_MS = 500
+/**
+ * How long one report connection may sit unaccepted before we give up on it.
+ * Herdr's api server reads one request per connection and can fall behind
+ * while the UI renders; a shorter window than Herdr's own read timeout drops
+ * reports exactly when the pane is busiest.
+ */
+const REQUEST_TIMEOUT_MS = 3_000
+/** Connection attempts per report before dropping it (fire-and-forget). */
+const MAX_SEND_ATTEMPTS = 3
 
 export class HerdrReporter {
   private seq = 0
@@ -88,15 +96,38 @@ export class HerdrReporter {
 
   private send(method: string, extra: Record<string, unknown>): void {
     const request = this.buildRequest(method, extra)
-    const client = net.createConnection(this.endpoint, () => {
-      client.write(`${JSON.stringify(request)}\n`)
-    })
-    const finish = (): void => {
-      client.destroy()
+    let attempts = 0
+    const trySend = (): void => {
+      attempts += 1
+      let written = false
+      const client = net.createConnection(this.endpoint, () => {
+        written = true
+        client.write(`${JSON.stringify(request)}\n`)
+      })
+      const drop = (): void => {
+        client.destroy()
+      }
+      // Retry only a connection that never reached the server (still queued
+      // behind Herdr's serial api server when our timeout fired). A request
+      // already written is never re-sent: Herdr would apply it twice.
+      client.setTimeout(REQUEST_TIMEOUT_MS, () => {
+        if (!written && attempts < MAX_SEND_ATTEMPTS) {
+          drop()
+          trySend()
+        } else {
+          drop()
+        }
+      })
+      client.on('error', () => {
+        if (!written && attempts < MAX_SEND_ATTEMPTS) {
+          trySend()
+        } else {
+          drop()
+        }
+      })
+      client.on('end', drop)
     }
-    client.setTimeout(REQUEST_TIMEOUT_MS, finish)
-    client.on('error', finish)
-    client.on('end', finish)
+    trySend()
   }
 
   private buildRequest(method: string, extra: Record<string, unknown>): HerdrRequest {
