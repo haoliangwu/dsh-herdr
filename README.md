@@ -1,9 +1,13 @@
 # dsh-herdr
 
-Reports the dsh TUI's lifecycle state to [Herdr](https://herdr.dev)'s agent
-panel. When dsh runs inside a Herdr pane, this plugin makes the pane show up
+Reports the [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI) lifecycle state to [Herdr](https://herdr.dev)'s agent
+panel. When `dsh --profile tui` runs inside a Herdr pane, this plugin makes the pane show up
 in the agent panel as `dsh` with a live `idle` / `working` / `blocked` status
 — the same mechanism Herdr's own integrations (opencode, pi, omp, …) use.
+
+![Herdr agent panel with dsh](docs/1.png)
+
+> **Dependency:** This plugin is designed for [ccch1mneyyy/dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI) (`@deepseek-harness-tui/dsh-tui >=0.8.5`). It has no effect with other profiles.
 
 ## How it works
 
