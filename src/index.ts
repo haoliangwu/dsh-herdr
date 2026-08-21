@@ -62,7 +62,9 @@ export function apply(ctx: Context, _config: Config = {}): void {
 
   const isRoot = (agent: Agent): boolean => {
     try {
-      return ctx.agents.roots().includes(agent)
+      const agents = (ctx.get('agents') as { roots(): Agent[] } | undefined) ?? (ctx as unknown as { agents?: { roots(): Agent[] } }).agents
+      if (agents === undefined) return true
+      return agents.roots().includes(agent)
     } catch {
       // The agents registry is not available yet (or at all); assume root.
       return true
@@ -110,7 +112,9 @@ export function apply(ctx: Context, _config: Config = {}): void {
   // the registry may not be ready inside `apply`, so retry on the next tick.
   const sweep = (): void => {
     try {
-      for (const agent of ctx.agents.roots()) onCreated(agent)
+      const agents = (ctx.get('agents') as { roots(): Agent[] } | undefined) ?? (ctx as unknown as { agents?: { roots(): Agent[] } }).agents
+      if (agents === undefined) return
+      for (const agent of agents.roots()) onCreated(agent)
     } catch {
       // agents registry not ready; `agent/created` will cover it.
     }

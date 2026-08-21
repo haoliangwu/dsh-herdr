@@ -59,6 +59,7 @@ export class HerdrReporter {
    */
   private seq = Date.now() * 1000
   private readonly endpoint: string
+  private requestChain: Promise<void> = Promise.resolve()
   /** Long-lived connection used only for the synchronous exit flush. */
   private readonly persistent: net.Socket
 
@@ -109,38 +110,51 @@ export class HerdrReporter {
 
   private send(method: string, extra: Record<string, unknown>): void {
     const request = this.buildRequest(method, extra)
-    let attempts = 0
-    const trySend = (): void => {
-      attempts += 1
+    const pending = this.requestChain.then(() => this.sendOnce(request))
+    // Keep the chain alive even if one send fails; a single dropped report
+    // must not block later lifecycle transitions (working -> idle).
+    this.requestChain = pending.catch(() => {})
+  }
+
+  private sendOnce(request: HerdrRequest): Promise<void> {
+    return new Promise<void>((resolve) => {
       let written = false
-      const client = net.createConnection(this.endpoint, () => {
-        written = true
-        client.write(`${JSON.stringify(request)}\n`)
-      })
-      const drop = (): void => {
-        client.destroy()
+      let attempts = 0
+      const trySend = (): void => {
+        attempts += 1
+        written = false
+        const client = net.createConnection(this.endpoint, () => {
+          written = true
+          client.write(`${JSON.stringify(request)}\n`)
+        })
+        const drop = (): void => {
+          client.destroy()
+        }
+        const finish = (): void => {
+          drop()
+          resolve()
+        }
+        client.setTimeout(REQUEST_TIMEOUT_MS, () => {
+          if (!written && attempts < MAX_SEND_ATTEMPTS) {
+            drop()
+            trySend()
+          } else {
+            finish()
+          }
+        })
+        client.on('error', () => {
+          if (!written && attempts < MAX_SEND_ATTEMPTS) {
+            trySend()
+          } else {
+            finish()
+          }
+        })
+        client.on('data', finish)
+        client.on('end', finish)
+        client.on('close', () => resolve())
       }
-      // Retry only a connection that never reached the server (still queued
-      // behind Herdr's serial api server when our timeout fired). A request
-      // already written is never re-sent: Herdr would apply it twice.
-      client.setTimeout(REQUEST_TIMEOUT_MS, () => {
-        if (!written && attempts < MAX_SEND_ATTEMPTS) {
-          drop()
-          trySend()
-        } else {
-          drop()
-        }
-      })
-      client.on('error', () => {
-        if (!written && attempts < MAX_SEND_ATTEMPTS) {
-          trySend()
-        } else {
-          drop()
-        }
-      })
-      client.on('end', drop)
-    }
-    trySend()
+      trySend()
+    })
   }
 
   private buildRequest(method: string, extra: Record<string, unknown>): HerdrRequest {

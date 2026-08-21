@@ -8,4 +8,4 @@
 - insert:
     - id: herdr-reporter
       name: 'dsh-herdr'
-      inject: []
+      inject: [agents]
