@@ -124,12 +124,22 @@ export function apply(ctx: Context, _config: Config = {}): void {
     clearTimeout(timer)
   })
 
-  // Release lifecycle authority when dsh exits: async flush on graceful
-  // shutdown, synchronous best-effort flush when the event loop is gone.
-  process.once('beforeExit', () => {
+  // Release lifecycle authority when the host (and this plugin) disposes:
+  // `dsh --profile tui` exiting via Ctrl+C disposes the root fiber without
+  // necessarily firing `process.beforeExit` inside the pane's shell. Without
+  // this effect the pane would stay as `dsh idle` forever after exit.
+  ctx.effect(() => () => {
     reporter.release()
   })
-  process.once('exit', () => {
-    reporter.releaseSync()
+
+  // Fallback for hard process exits (kill -9 style is uncatchable, but
+  // beforeExit/exit cover the graceful Node shutdown path).
+  const beforeExitHandler = (): void => { reporter.release() }
+  const exitHandler = (): void => { reporter.releaseSync() }
+  process.once('beforeExit', beforeExitHandler)
+  process.once('exit', exitHandler)
+  ctx.effect(() => () => {
+    process.off('beforeExit', beforeExitHandler)
+    process.off('exit', exitHandler)
   })
 }

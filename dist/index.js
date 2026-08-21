@@ -178,11 +178,20 @@ function apply(ctx, _config = {}) {
   ctx.effect(() => () => {
     clearTimeout(timer);
   });
-  process.once("beforeExit", () => {
+  ctx.effect(() => () => {
     reporter.release();
   });
-  process.once("exit", () => {
+  const beforeExitHandler = () => {
+    reporter.release();
+  };
+  const exitHandler = () => {
     reporter.releaseSync();
+  };
+  process.once("beforeExit", beforeExitHandler);
+  process.once("exit", exitHandler);
+  ctx.effect(() => () => {
+    process.off("beforeExit", beforeExitHandler);
+    process.off("exit", exitHandler);
   });
 }
 export {
